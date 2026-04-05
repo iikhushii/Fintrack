@@ -14,21 +14,21 @@ const bcrypt = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid');
 const { getDb } = require('./database');
 
-const db = getDb();
-
-const CATEGORIES = ['Salary','Freelance','Investment','Rent','Groceries','Utilities','Entertainment','Travel','Healthcare','Education','Other'];
-
-function randBetween(min, max) {
-  return +(Math.random() * (max - min) + min).toFixed(2);
-}
-
 function randDate(daysBack = 90) {
   const d = new Date();
   d.setDate(d.getDate() - Math.floor(Math.random() * daysBack));
   return d.toISOString().split('T')[0];
 }
 
-async function seed() {
+/**
+ * Runs the seed logic and returns a summary object.
+ * Safe to call multiple times — uses INSERT OR IGNORE so existing rows are skipped.
+ *
+ * @returns {Promise<{ usersSeeded: string[], transactionsSeeded: number }>}
+ */
+async function runSeed() {
+  const db = getDb();
+
   // ── Users ──────────────────────────────────────────────────────────────────
   const users = [
     { name: 'Alice Admin',    email: 'admin@finance.dev',   role: 'admin',   password: 'Admin@123' },
@@ -51,7 +51,11 @@ async function seed() {
   }
 
   // ── Transactions ───────────────────────────────────────────────────────────
-  const adminId = createdUsers[0].id;
+  // Resolve the admin user's actual id from the DB (handles re-runs where the
+  // INSERT OR IGNORE above was a no-op and createdUsers[0].id is a fresh uuid).
+  const adminRow = db.prepare('SELECT id FROM users WHERE email = ?').get('admin@finance.dev');
+  const adminId  = adminRow.id;
+
   const insertTxn = db.prepare(`
     INSERT OR IGNORE INTO transactions (id, amount, type, category, date, notes, created_by)
     VALUES (@id, @amount, @type, @category, @date, @notes, @created_by)
@@ -85,6 +89,16 @@ async function seed() {
   }
   console.log(`  ✔ Inserted ${samples.length} sample transactions`);
   console.log('\nSeed complete ✅');
+
+  return {
+    usersSeeded: users.map(u => ({ email: u.email, role: u.role })),
+    transactionsSeeded: samples.length,
+  };
 }
 
-seed().catch(console.error);
+module.exports = { runSeed };
+
+// Allow running directly: node src/config/seed.js
+if (require.main === module) {
+  runSeed().catch(console.error);
+}
